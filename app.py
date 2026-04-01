@@ -1,414 +1,284 @@
 import streamlit as st
-import joblib
-import numpy as np
-import json
-import os
-
-# ─── Page Config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="FraudShield — Credit Card Fraud Detector",
-    page_icon="🛡️",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+from utils import (
+    inject_css, render_sidebar, render_footer,
+    get_model, get_ann_model, init_session_state,
+    create_pie_chart, create_risk_distribution,
+    get_risk_color
 )
 
-# ─── Custom CSS ────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+# ─── Page Config ────────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="FraudShield — Dashboard",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-:root {
-    --bg: #0a0e1a;
-    --card: #111827;
-    --border: #1e2d45;
-    --accent: #00d4ff;
-    --danger: #ff4d6d;
-    --success: #00e5a0;
-    --text: #e2e8f0;
-    --muted: #64748b;
-}
+# ─── Inject Theme ───────────────────────────────────────────────────────────────
+inject_css()
+render_sidebar()
+init_session_state()
+model, scaler, top_features, config, threshold, model_loaded = get_model()
+ann_model, ann_loaded = get_ann_model()
 
-html, body, [class*="css"] {
-    font-family: 'Segoe UI', sans-serif;
-    background-color: var(--bg);
-    color: var(--text);
-}
-
-.stApp {
-    background: linear-gradient(135deg, #0a0e1a 0%, #0d1526 50%, #0a1628 100%);
-    min-height: 100vh;
-}
-
-/* Header */
-.hero {
-    text-align: center;
-    padding: 2.5rem 0 1.5rem;
-}
-.hero h1 {
-    font-family: 'Courier New', monospace;
-    font-size: 2.4rem;
-    font-weight: 700;
-    color: var(--accent);
-    letter-spacing: -1px;
-    margin-bottom: 0.4rem;
-    text-shadow: 0 0 30px rgba(0,212,255,0.3);
-}
-.hero p {
-    color: var(--muted);
-    font-size: 0.95rem;
-    font-weight: 300;
-    letter-spacing: 0.5px;
-}
-
-/* Cards */
-.info-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.2rem 1.5rem;
-    margin-bottom: 1rem;
-}
-.section-label {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border);
-}
-
-/* Result boxes */
-.result-fraud {
-    background: linear-gradient(135deg, #1a0a10, #2d0d1a);
-    border: 1px solid var(--danger);
-    border-radius: 14px;
-    padding: 2rem;
-    text-align: center;
-    box-shadow: 0 0 40px rgba(255,77,109,0.15);
-}
-.result-legit {
-    background: linear-gradient(135deg, #0a1a14, #0d2d20);
-    border: 1px solid var(--success);
-    border-radius: 14px;
-    padding: 2rem;
-    text-align: center;
-    box-shadow: 0 0 40px rgba(0,229,160,0.15);
-}
-.result-title {
-    font-family: 'Space Mono', monospace;
-    font-size: 1.6rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-}
-.result-fraud .result-title { color: var(--danger); }
-.result-legit .result-title { color: var(--success); }
-
-.result-sub {
-    color: var(--muted);
-    font-size: 0.9rem;
-    margin-bottom: 1rem;
-}
-.prob-badge {
-    display: inline-block;
-    font-family: 'Space Mono', monospace;
-    font-size: 1.1rem;
-    padding: 0.4rem 1.2rem;
-    border-radius: 50px;
-}
-.result-fraud .prob-badge {
-    background: rgba(255,77,109,0.15);
-    color: var(--danger);
-    border: 1px solid rgba(255,77,109,0.3);
-}
-.result-legit .prob-badge {
-    background: rgba(0,229,160,0.1);
-    color: var(--success);
-    border: 1px solid rgba(0,229,160,0.25);
-}
-
-/* Input overrides */
-div[data-baseweb="input"] input,
-div[data-baseweb="select"] {
-    background: #1a2235 !important;
-    border-color: var(--border) !important;
-    color: var(--text) !important;
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.85rem !important;
-}
-
-/* Button */
-.stButton > button {
-    width: 100%;
-    background: linear-gradient(135deg, #0070f3, #00b4d8) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 10px !important;
-    padding: 0.75rem !important;
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.9rem !important;
-    letter-spacing: 1px !important;
-    font-weight: 700 !important;
-    transition: all 0.2s ease !important;
-    margin-top: 1rem;
-}
-.stButton > button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 25px rgba(0,112,243,0.4) !important;
-}
-
-/* Slider label */
-label { color: var(--muted) !important; font-size: 0.82rem !important; }
-
-/* Divider */
-hr { border-color: var(--border) !important; margin: 1.5rem 0; }
-
-/* Metric pill */
-.metric-row {
-    display: flex;
-    gap: 0.8rem;
-    justify-content: center;
-    margin-top: 1rem;
-    flex-wrap: wrap;
-}
-.metric-pill {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 0.4rem 0.9rem;
-    font-size: 0.78rem;
-    color: var(--muted);
-    font-family: 'Space Mono', monospace;
-}
-.metric-pill span { color: var(--text); font-weight: 600; }
-
-.footer {
-    text-align: center;
-    color: var(--muted);
-    font-size: 0.75rem;
-    padding: 2rem 0 1rem;
-    letter-spacing: 0.5px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ─── Load Model & Assets ───────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'fraud_model_lr.pkl')
-SCALER_PATH = os.path.join(BASE_DIR, 'scaler.pkl')
-FEATURES_PATH = os.path.join(BASE_DIR, 'features.json')
-CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
-
-@st.cache_resource
-def load_assets():
-    model  = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
-    with open(FEATURES_PATH, 'r', encoding='utf-8') as f:
-        features = json.load(f)
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-    return model, scaler, features, config
-
-try:
-    model, scaler, top_features, config = load_assets()
-    THRESHOLD = float(config.get('threshold', 0.3))
-    model_loaded = True
-except Exception as e:
-    model_loaded = False
-    st.error("Failed to load model assets")
-    st.exception(e)
-    st.info("Make sure fraud_model_lr.pkl, scaler.pkl, features.json, and config.json are in the same folder as app.py.")
-    st.warning(f"Current working dir: {os.getcwd()}")
-    st.warning(f"Asset paths: {MODEL_PATH}, {SCALER_PATH}, {FEATURES_PATH}, {CONFIG_PATH}")
+if not model_loaded:
     st.stop()
 
 
-# ─── Hero ──────────────────────────────────────────────────────────────────────
+# ─── Page Title ─────────────────────────────────────────────────────────────────
 st.markdown("""
-<div class="hero">
-    <h1>🛡️ FraudShield</h1>
-    <p>Credit Card Fraud Detection System &nbsp;·&nbsp; ML InnovateX Hackathon</p>
+<div class="page-title">
+    <h1>🛡️ FraudShield Dashboard</h1>
+    <div class="subtitle">Real-time fraud detection monitoring & analytics</div>
 </div>
 """, unsafe_allow_html=True)
 
-
-# ─── Model Info Bar ────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="metric-row">
-    <div class="metric-pill">Model <span>Logistic Regression</span></div>
-    <div class="metric-pill">AUC <span>0.9736</span></div>
-    <div class="metric-pill">Threshold <span>0.30</span></div>
-    <div class="metric-pill">Features <span>Top 15 (PCA)</span></div>
-</div>
-<br>
-""", unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
 
-# ─── Input Form ───────────────────────────────────────────────────────────────
-st.markdown('<div class="info-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-label">Transaction Details</div>', unsafe_allow_html=True)
+# ─── Stats Cards ────────────────────────────────────────────────────────────────
+total = st.session_state.total_scans
+fraud = st.session_state.fraud_detected
+legit = st.session_state.legit_detected
+rate = (fraud / total * 100) if total > 0 else 0
 
-col1, col2 = st.columns(2)
-with col1:
-    amount = st.number_input(
-        "Transaction Amount (₹ / $)",
-        min_value=0.0, max_value=20000.0,
-        value=120.0, step=0.5,
-        help="Actual transaction amount"
-    )
-with col2:
-    time_val = st.number_input(
-        "Time (seconds from first txn)",
-        min_value=0, max_value=172800,
-        value=1500,
-        help="Time elapsed since first transaction in dataset"
-    )
+c1, c2, c3, c4, c5 = st.columns(5)
 
-st.markdown("</div>", unsafe_allow_html=True)
+with c1:
+    st.markdown(f"""
+    <div class="stat-card accent">
+        <span class="stat-icon">📊</span>
+        <div class="stat-value">{total}</div>
+        <div class="stat-label">Total Scans</div>
+    </div>
+    """, unsafe_allow_html=True)
 
+with c2:
+    st.markdown(f"""
+    <div class="stat-card success">
+        <span class="stat-icon">✅</span>
+        <div class="stat-value">{legit}</div>
+        <div class="stat-label">Legitimate</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# ─── V Feature Inputs (only features the model actually uses) ─────────────────
-v_features = [f for f in top_features if f.startswith('V')]
+with c3:
+    st.markdown(f"""
+    <div class="stat-card danger">
+        <span class="stat-icon">🚨</span>
+        <div class="stat-value">{fraud}</div>
+        <div class="stat-label">Fraud Detected</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown('<div class="info-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-label">PCA-Transformed Features (V1–V28)</div>', unsafe_allow_html=True)
-st.caption("These are anonymized PCA components from the original transaction data. Default = 0.0 for typical transactions.")
+with c4:
+    st.markdown(f"""
+    <div class="stat-card warning">
+        <span class="stat-icon">📈</span>
+        <div class="stat-value">{rate:.1f}%</div>
+        <div class="stat-label">Fraud Rate</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-v_inputs = {}
-cols = st.columns(3)
-for i, feat in enumerate(v_features):
-    with cols[i % 3]:
-        v_inputs[feat] = st.number_input(
-            feat,
-            min_value=-30.0, max_value=35.0,
-            value=0.0, step=0.01,
-            format="%.3f",
-            key=feat
-        )
+with c5:
+    model_status = "✅ Dual" if ann_loaded else "⚡ LR Only"
+    st.markdown(f"""
+    <div class="stat-card purple">
+        <span class="stat-icon">🤖</span>
+        <div class="stat-value" style="font-size:1.2rem;">{model_status}</div>
+        <div class="stat-label">Model Status</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ─── Quick Test Presets ────────────────────────────────────────────────────────
-st.markdown('<div class="info-card">', unsafe_allow_html=True)
-st.markdown('<div class="section-label">Quick Test Presets</div>', unsafe_allow_html=True)
-st.caption("Load known transaction profiles to test the model.")
-
-pc1, pc2, pc3 = st.columns(3)
-
-with pc1:
-    typical = st.button("📦 Typical Purchase")
-with pc2:
-    suspicious = st.button("⚠️ Suspicious Pattern")
-with pc3:
-    clear_btn = st.button("🔄 Reset All")
-
-st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
 
-# ─── Predict Button ────────────────────────────────────────────────────────────
-predict_btn = st.button("🔍  ANALYZE TRANSACTION")
+# ─── Charts Row ─────────────────────────────────────────────────────────────────
+col_left, col_right = st.columns([1, 1])
 
+with col_left:
+    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Detection Distribution</div>', unsafe_allow_html=True)
 
-# ─── Prediction Logic ──────────────────────────────────────────────────────────
-def build_input(amount_val, time_input, v_vals):
-    """Build input row using same scaling as training."""
-    # Approximate scaling (replace with actual scaler stats if saved separately)
-    scaled_amount = (amount_val - 65.0) / 213.7
-    scaled_time   = (time_input - 1638.0) / 1016.6
-
-    row = {}
-    for feat in top_features:
-        if feat == 'scaled_amount':
-            row[feat] = scaled_amount
-        elif feat == 'scaled_time':
-            row[feat] = scaled_time
-        elif feat in v_vals:
-            row[feat] = v_vals[feat]
-        else:
-            row[feat] = 0.0
-
-    return np.array([[row[f] for f in top_features]])
-
-
-def run_prediction(amount_val, time_input, v_vals):
-    input_row = build_input(amount_val, time_input, v_vals)
-    proba = model.predict_proba(input_row)[0][1]
-    pred  = int(proba >= THRESHOLD)
-    return pred, proba
-
-
-# Handle preset buttons
-if typical:
-    st.info("Typical purchase profile loaded — all V features at 0.0, amount ₹120, time 1500s. Click Analyze.")
-
-if suspicious:
-    st.warning("Suspicious profile: high-value transaction with anomalous V4, V11, V14 values loaded.")
-    # These are rough fraud-leaning values based on dataset EDA
-    v_inputs['V4']  = 4.5  if 'V4'  in v_inputs else 0.0
-    v_inputs['V11'] = -3.2 if 'V11' in v_inputs else 0.0
-    v_inputs['V14'] = -8.5 if 'V14' in v_inputs else 0.0
-
-if clear_btn:
-    st.rerun()
-
-
-# Run prediction
-if predict_btn:
-    with st.spinner("Analyzing transaction..."):
-        pred, proba = run_prediction(amount, time_val, v_inputs)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    if pred == 1:
-        st.markdown(f"""
-        <div class="result-fraud">
-            <div class="result-title">⚠️ FRAUDULENT</div>
-            <div class="result-sub">This transaction shows fraud indicators above threshold ({THRESHOLD})</div>
-            <div class="prob-badge">Fraud Probability: {proba:.1%}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.error("🚨 Recommended Action: Block transaction and notify cardholder immediately.")
-
+    if total > 0:
+        fig = create_pie_chart(fraud, legit)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.markdown(f"""
-        <div class="result-legit">
-            <div class="result-title">✅ LEGITIMATE</div>
-            <div class="result-sub">Transaction appears normal. No fraud indicators detected.</div>
-            <div class="prob-badge">Fraud Probability: {proba:.1%}</div>
+        st.markdown("""
+        <div style="text-align:center; padding: 3rem 0; color: var(--text-muted);">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📊</div>
+            <div style="font-size: 0.85rem;">No transactions analyzed yet</div>
+            <div style="font-size: 0.75rem; margin-top: 0.3rem; color: var(--text-muted);">
+                Navigate to <b>Analyze</b> to start scanning
+            </div>
         </div>
         """, unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.success("✔️ Transaction cleared. Safe to proceed.")
 
-    # Probability gauge
-    st.markdown("**Fraud Risk Score**")
-    st.progress(float(proba))
-    st.caption(f"Raw probability: `{proba:.6f}` — Decision threshold: `{THRESHOLD}`")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col_right:
+    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Risk Distribution</div>', unsafe_allow_html=True)
+
+    history = st.session_state.transaction_history
+    if history:
+        fig = create_risk_distribution(history)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    else:
+        st.markdown("""
+        <div style="text-align:center; padding: 3rem 0; color: var(--text-muted);">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📈</div>
+            <div style="font-size: 0.85rem;">Risk distribution will appear here</div>
+            <div style="font-size: 0.75rem; margin-top: 0.3rem; color: var(--text-muted);">
+                Analyze transactions to populate data
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ─── Model Info Expander ───────────────────────────────────────────────────────
-with st.expander("ℹ️ About this Model"):
+# ─── Model Performance Cards ───────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Model Performance Metrics</div>', unsafe_allow_html=True)
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+
+with m1:
     st.markdown("""
-    **Dataset:** Credit Card Fraud Detection (Kaggle — ULB)  
-    **Records:** 3,972 transactions | 2 fraud cases  
-    **Best Model:** Logistic Regression (`class_weight='balanced'`, `C=0.1`)  
-    **ANN ROC-AUC:** 1.000 (test) | **LR ROC-AUC:** 0.9736  
-    **Imbalance Handling:** RandomOverSampler + class weights  
-    **Feature Selection:** Top 15 features via Random Forest importance  
-    **Threshold:** 0.30 (lowered from 0.5 to improve fraud recall)
+    <div style="text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:1.4rem; font-weight:700; color:#00d4ff;">0.9736</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; margin-top:0.2rem;">ROC-AUC</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    > ⚠️ This model was trained on a very small fraud sample (2 cases).
-    > Results demonstrate methodology. Production use requires more fraud data.
-    """)
+with m2:
+    st.markdown("""
+    <div style="text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:1.4rem; font-weight:700; color:#00e5a0;">96.2%</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; margin-top:0.2rem;">Accuracy</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with m3:
+    st.markdown("""
+    <div style="text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:1.4rem; font-weight:700; color:#fbbf24;">0.30</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; margin-top:0.2rem;">Threshold</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with m4:
+    st.markdown("""
+    <div style="text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:1.4rem; font-weight:700; color:#f97316;">15</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; margin-top:0.2rem;">Features</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with m5:
+    st.markdown("""
+    <div style="text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:1.4rem; font-weight:700; color:#a855f7;">ANN</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; margin-top:0.2rem;">Deep Learning</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with m6:
+    st.markdown("""
+    <div style="text-align:center;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:1.4rem; font-weight:700; color:#e2e8f0;">LR</div>
+        <div style="font-size:0.7rem; color:var(--text-muted); letter-spacing:1px; text-transform:uppercase; margin-top:0.2rem;">Statistical</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 
-# ─── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="footer">
-    ML InnovateX Hackathon &nbsp;·&nbsp; Credit Card Fraud Detection &nbsp;·&nbsp; Built with Streamlit
-</div>
-""", unsafe_allow_html=True)
+# ─── Recent Activity ───────────────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+st.markdown('<div class="section-header">Recent Activity Feed</div>', unsafe_allow_html=True)
+
+if history:
+    for txn in history[:8]:
+        status_class = "status-fraud" if txn['prediction'] == 'Fraud' else "status-legit"
+        status_icon = "🚨" if txn['prediction'] == 'Fraud' else "✅"
+        risk_color = get_risk_color(txn['risk_level'])
+        model_name = txn.get('model', 'LR')
+        st.markdown(f"""
+        <div class="activity-row">
+            <span class="activity-time">{txn['timestamp']}</span>
+            <span class="activity-amount">₹{txn['amount']:,.2f}</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:0.72rem; color:{risk_color}; font-weight:600;">{txn['risk_level']}</span>
+            <span class="activity-status {status_class}">{status_icon} {txn['prediction']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    st.markdown("""
+    <div style="text-align:center; padding: 2rem 0; color: var(--text-muted);">
+        <div style="font-size: 2rem; margin-bottom: 0.5rem;">🕐</div>
+        <div style="font-size: 0.85rem;">No recent activity</div>
+        <div style="font-size: 0.75rem; margin-top: 0.3rem;">Transaction history will appear here after analysis</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ─── Quick Navigation ──────────────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown('<div class="section-header">Quick Actions</div>', unsafe_allow_html=True)
+
+q1, q2, q3, q4 = st.columns(4)
+
+with q1:
+    st.markdown("""
+    <div class="preset-btn">
+        <span class="preset-icon">🔍</span>
+        <div class="preset-title">Analyze Transaction</div>
+        <div class="preset-desc">Single transaction fraud check</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Go to Analyze →", key="nav_analyze"):
+        st.switch_page("pages/1_🔍_Analyze.py")
+
+with q2:
+    st.markdown("""
+    <div class="preset-btn">
+        <span class="preset-icon">📊</span>
+        <div class="preset-title">Batch Processing</div>
+        <div class="preset-desc">Upload CSV for bulk analysis</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Go to Batch →", key="nav_batch"):
+        st.switch_page("pages/2_📊_Batch.py")
+
+with q3:
+    st.markdown("""
+    <div class="preset-btn">
+        <span class="preset-icon">📈</span>
+        <div class="preset-title">Analytics & Insights</div>
+        <div class="preset-desc">Feature importance & model stats</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Go to Analytics →", key="nav_analytics"):
+        st.switch_page("pages/3_📈_Analytics.py")
+
+with q4:
+    st.markdown("""
+    <div class="preset-btn">
+        <span class="preset-icon">🔴</span>
+        <div class="preset-title">Live Monitor</div>
+        <div class="preset-desc">Real-time transaction stream</div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Go to Live →", key="nav_live"):
+        st.switch_page("pages/5_🔴_Live.py")
+
+
+# ─── Footer ─────────────────────────────────────────────────────────────────────
+render_footer()
